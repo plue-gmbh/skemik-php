@@ -1,4 +1,4 @@
-# skemik-php
+# Skemik PHP
 
 The class `Skemik` reads the feed of a [Skemik](https://github.com/plue-gmbh/skemik)
 install from a site on ordinary webspace, and writes to it, with nothing else:
