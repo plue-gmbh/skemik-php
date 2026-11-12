@@ -41,9 +41,6 @@ final class Skemik
     foreach ($addresses as $address) {
       $files[$address] = $this->cache . '/' . md5($this->key . $this->whole($address));
     }
-    $multi = curl_multi_init();
-    curl_multi_setopt($multi, CURLMOPT_MAX_TOTAL_CONNECTIONS, 4);
-    curl_multi_setopt($multi, CURLMOPT_PIPELINING, CURLPIPE_NOTHING);
     $fetching = [];
     foreach ($files as $address => $file) {
       $stale = !is_file($file . '.etag') || filemtime($file . '.etag') <= $this->changed();
@@ -53,19 +50,11 @@ final class Skemik
           touch($file);
         }
         $fetching[$file] = $this->fetching($this->whole($address), $file, $headers);
-        curl_multi_add_handle($multi, $fetching[$file]);
       }
     }
-    do {
-      curl_multi_exec($multi, $running);
-      if ($running) {
-        curl_multi_select($multi);
-      }
-    } while ($running);
-    while ($done = curl_multi_info_read($multi)) {
-      $curl = $done['handle'];
-      $this->kept(array_search($curl, $fetching, true), $done['result'] === CURLE_OK
-        ? curl_getinfo($curl, CURLINFO_RESPONSE_CODE) : 0, curl_multi_getcontent($curl));
+    foreach ($this->fetched($fetching) as $file => $result) {
+      $this->kept($file, $result === CURLE_OK ? curl_getinfo($fetching[$file], CURLINFO_RESPONSE_CODE) : 0,
+        curl_multi_getcontent($fetching[$file]));
     }
     return array_map(fn (string $file): ?array
       => is_file($file) ? json_decode((string) file_get_contents($file), true) : null, $files);
@@ -338,8 +327,6 @@ final class Skemik
   private function copies(): void
   {
     function_exists('fastcgi_finish_request') && fastcgi_finish_request();
-    $multi = curl_multi_init();
-    curl_multi_setopt($multi, CURLMOPT_MAX_TOTAL_CONNECTIONS, 4);
     $fetching = [];
     foreach (array_unique($this->shown) as $address) {
       $lock = $this->media . '/' . basename($address) . '.lock';
@@ -353,18 +340,35 @@ final class Skemik
         CURLOPT_MAXFILESIZE => 20000000, CURLOPT_USERAGENT => $_SERVER['HTTP_HOST'] ?? 'php',
         CURLOPT_NOPROGRESS => false,
         CURLOPT_PROGRESSFUNCTION => fn ($curl, int $whole, int $read): int => (int) ($read > 20000000)]);
-      curl_multi_add_handle($multi, $fetching[$address]);
     }
-    do {
-      curl_multi_exec($multi, $running);
-      if ($running) {
-        curl_multi_select($multi);
-      }
-    } while ($running);
-    while ($done = curl_multi_info_read($multi)) {
-      $this->copied(array_search($done['handle'], $fetching, true), $done['handle'], $done['result']);
+    foreach ($this->fetched($fetching) as $address => $result) {
+      $this->copied($address, $fetching[$address], $result);
     }
     $this->swept();
+  }
+
+  /* Four at a time, the next added as one finishes: curl counts a transfer's timeout from when it is added.
+     A timeout ends the line, so a feed that stalls costs a page one timeout and not one for every four,
+     and what never started comes back null. */
+  private function fetched(array $fetching): array
+  {
+    $multi = curl_multi_init();
+    curl_multi_setopt($multi, CURLMOPT_PIPELINING, CURLPIPE_NOTHING);
+    $results = array_fill_keys(array_keys($fetching), null);
+    $waiting = $fetching;
+    do {
+      curl_multi_exec($multi, $running);
+      while ($done = curl_multi_info_read($multi)) {
+        $results[array_search($done['handle'], $fetching, true)] = $done['result'];
+        $waiting = $done['result'] === CURLE_OPERATION_TIMEDOUT ? [] : $waiting;
+      }
+      $next = array_splice($waiting, 0, 4 - $running);
+      array_map(fn (CurlHandle $curl): int => curl_multi_add_handle($multi, $curl), $next);
+      if ($next === [] && $running) {
+        curl_multi_select($multi);
+      }
+    } while ($running || $next !== []);
+    return $results;
   }
 
   private function swept(): void
@@ -383,9 +387,13 @@ final class Skemik
     }
   }
 
-  private function copied(string $address, CurlHandle $curl, int $result): void
+  private function copied(string $address, CurlHandle $curl, ?int $result): void
   {
     $base = $this->media . '/' . basename($address);
+    if ($result === null) {
+      unlink($base . '.lock');
+      return;
+    }
     $kind = $this->kinds[trim(explode(';', (string) curl_getinfo($curl, CURLINFO_CONTENT_TYPE))[0])] ?? null;
     $whole = $result === CURLE_OK && curl_getinfo($curl, CURLINFO_RESPONSE_CODE) === 200;
     if ($whole && $kind !== null) {

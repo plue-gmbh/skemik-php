@@ -156,8 +156,13 @@ fetched for thirty days is deleted, and read anew when next asked.
 quarter of its answers in turn and not for each. Against an install on another
 host the round trip is what costs, a `304` as much as a `200`. On the same host
 the site and its install share one pool of PHP workers, and four at once keep a
-page to five of them, however many addresses it asks. The files a page shows
-are copied four at once too.
+page to five of them, however many addresses it asks. An address is asked only
+once one of the four has answered, so its five seconds start when it is asked
+and not while it waits. An answer cut off by the timeout ends the call, and
+what still waited counts as failed with it: a feed that stalls costs a call
+five seconds, however many addresses it asks. The files a page shows are
+copied four at once too, and a timeout ends that line as well. A file that
+still waited was not tried, so the next page that shows it tries it.
 
 ## How to build a website
 
@@ -245,9 +250,10 @@ well be a page whose `text` is typed whole.
   worker per file per visitor. A copy is made once and never asked again, since a replaced
   file gets a new address and none changes under its old one. Where PHP runs
   as FPM it is made once the page has left. Elsewhere the visitor whose page
-  first shows the file waits for it, ten seconds at most. The copy is swapped
-  in whole and named by the type the feed sent the file with. Only a file of
-  the install the class reads is copied, of a type the frontend lists and of
+  first shows the files waits for them, four at once and ten seconds at most
+  for each. The copy is swapped in whole and named by the type the feed sent
+  the file with. Only a file of the install the class reads is copied, of a
+  type the frontend lists and of
   20 MB at most. Any other stays at the feed's address. One past that size, or
   sent as a type not listed, is left alone for thirty days, and one whose
   fetch failed is tried again after fifteen minutes. A copy is served by the site's own host
