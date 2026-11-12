@@ -66,7 +66,9 @@ Each on `$skemik`:
 - `new Skemik('https://example.com/feed/de-DE', $key)` reads with a key what a
   stranger cannot. A bookkeeping view is `read('/invoices')` under the blog's
   loop, on a `Skemik` built with the bookkeeping's key. Its copies are kept
-  apart from the stranger's.
+  apart from the stranger's. They are files holding what the key read, so a
+  site that reads with a key names a folder its host does not serve, as the
+  next call does.
 
 - `new Skemik('https://example.com/feed/de-DE', '', '/tmp/copies')` keeps its
   copies in another folder than `cache/` beside the class, which PHP must be
@@ -160,9 +162,10 @@ page to five of them, however many addresses it asks. An address is asked only
 once one of the four has answered, so its five seconds start when it is asked
 and not while it waits. An answer cut off by the timeout ends the call, and
 what still waited counts as failed with it: a feed that stalls costs a call
-five seconds, however many addresses it asks. The files a page shows are
-copied four at once too, and a timeout ends that line as well. A file that
-still waited was not tried, so the next page that shows it tries it.
+five seconds, however many addresses it asks. The one call a minute that asks
+`/feed` for the date waits up to five seconds more for it. The files a page
+shows are copied four at once too, and a timeout ends that line as well. A
+file that still waited was not tried, so the next page that shows it tries it.
 
 ## How to build a website
 
